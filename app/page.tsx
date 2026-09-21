@@ -1,69 +1,479 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useState, useEffect } from "react";
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  ShieldAlert,
+  Award,
+  Clock,
+  ArrowRight,
+} from "lucide-react";
+
+interface BallState {
+  number: number;
+  color: "red" | "white";
+  gate1: boolean;
+  gate2: boolean;
+  gate3: boolean;
+  agari: boolean;
+  isOut: boolean;
+  score: number;
+}
+
+const initialBalls: BallState[] = Array.from({ length: 10 }, (_, i) => ({
+  number: i + 1,
+  color: (i + 1) % 2 !== 0 ? "red" : "white",
+  gate1: false,
+  gate2: false,
+  gate3: false,
+  agari: false,
+  isOut: false,
+  score: 0,
+}));
+
+export default function RefereeBoard() {
+  const [secondsLeft, setSecondsLeft] = useState(1800);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [activeBallNumber, setActiveBallNumber] = useState(1);
+  const [balls, setBalls] = useState<BallState[]>(initialBalls);
+  const [logs, setLogs] = useState<string[]>([]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isTimerRunning && secondsLeft > 0) {
+      interval = setInterval(() => {
+        setSecondsLeft((prev) => prev - 1);
+      }, 1000);
+    } else if (secondsLeft === 0) {
+      setIsTimerRunning(false);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning, secondsLeft]);
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const redScore = balls
+    .filter((b) => b.color === "red")
+    .reduce((acc, b) => acc + b.score, 0);
+
+  const whiteScore = balls
+    .filter((b) => b.color === "white")
+    .reduce((acc, b) => acc + b.score, 0);
+
+  const currentBall = balls.find((b) => b.number === activeBallNumber)!;
+
+  const addLog = (text: string) => {
+    const timeStamp = formatTime(secondsLeft);
+    setLogs((prev) => [`[${timeStamp}] ${text}`, ...prev.slice(0, 19)]);
+  };
+
+  const handleScoreAction = (action: "gate1" | "gate2" | "gate3" | "agari") => {
+    setBalls((prev) =>
+      prev.map((b) => {
+        if (b.number !== activeBallNumber) return b;
+
+        let addedPoint = 0;
+        const updated = { ...b };
+
+        if (action === "gate1" && !b.gate1) {
+          updated.gate1 = true;
+          addedPoint = 1;
+          addLog(`Bola ${b.number} lolos Gate 1 (+1)`);
+        } else if (action === "gate2" && b.gate1 && !b.gate2) {
+          updated.gate2 = true;
+          addedPoint = 1;
+          addLog(`Bola ${b.number} lolos Gate 2 (+1)`);
+        } else if (action === "gate3" && b.gate2 && !b.gate3) {
+          updated.gate3 = true;
+          addedPoint = 1;
+          addLog(`Bola ${b.number} lolos Gate 3 (+1)`);
+        } else if (action === "agari" && b.gate3 && !b.agari) {
+          updated.agari = true;
+          addedPoint = 2;
+          addLog(`Bola ${b.number} AGARI / Goal Pole (+2)`);
+        }
+
+        updated.score += addedPoint;
+        return updated;
+      }),
+    );
+  };
+
+  const toggleOutBall = () => {
+    setBalls((prev) =>
+      prev.map((b) => {
+        if (b.number !== activeBallNumber) return b;
+        const status = !b.isOut;
+        addLog(
+          `Bola ${b.number} ${status ? "dinyatakan OUT-BALL" : "kembali IN-BALL"}`,
+        );
+        return { ...b, isOut: status };
+      }),
+    );
+  };
+
+  const nextTurn = () => {
+    setActiveBallNumber((prev) => (prev >= 10 ? 1 : prev + 1));
+  };
+
+  const resetMatch = () => {
+    if (confirm("Reset seluruh data pertandingan ini?")) {
+      setSecondsLeft(1800);
+      setIsTimerRunning(false);
+      setActiveBallNumber(1);
+      setBalls(initialBalls);
+      setLogs([]);
+    }
+  };
+
+  const redBalls = balls.filter((b) => b.color === "red");
+  const whiteBalls = balls.filter((b) => b.color === "white");
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="min-h-screen bg-slate-950 text-slate-100 p-3 md:p-6 font-sans">
+      <div className="max-w-5xl mx-auto space-y-4">
+        {/* HEADER: INFO LAPANGAN & TIMER */}
+        <header className="flex items-center justify-between bg-slate-900 px-5 py-3 rounded-2xl border border-slate-800 shadow-sm">
+          <div>
+            <span className="text-[11px] font-bold tracking-widest text-emerald-400 uppercase">
+              PERGATSI Official Scoring
+            </span>
+            <h1 className="text-lg md:text-xl font-black text-white">
+              Lapangan 1 — Fase Pool
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-black/60 px-4 py-1.5 rounded-xl border border-slate-800">
+              <Clock className="w-5 h-5 text-amber-400 animate-pulse" />
+              <span className="text-2xl md:text-3xl font-mono font-bold text-amber-400 tracking-wider">
+                {formatTime(secondsLeft)}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setIsTimerRunning(!isTimerRunning)}
+              className={`p-2.5 rounded-xl font-bold flex items-center transition ${
+                isTimerRunning
+                  ? "bg-amber-600 hover:bg-amber-700"
+                  : "bg-emerald-600 hover:bg-emerald-700"
+              }`}
+              title={isTimerRunning ? "Jeda Waktu" : "Mulai Pertandingan"}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              {isTimerRunning ? (
+                <Pause className="w-5 h-5" />
+              ) : (
+                <Play className="w-5 h-5" />
+              )}
+            </button>
+
+            <button
+              onClick={resetMatch}
+              className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-white transition"
+              title="Reset Pertandingan"
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              <RotateCcw className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
+
+        {/* REKAP SKOR BESAR */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-red-950/30 border border-red-800/50 rounded-2xl p-3 text-center">
+            <span className="text-xs font-bold tracking-wider text-red-400 uppercase">
+              TIM MERAH
+            </span>
+            <div className="text-5xl font-black text-red-500 my-1">
+              {redScore}
+            </div>
+            <span className="text-[11px] text-red-300/80">
+              Bola Ganjil (1, 3, 5, 7, 9)
+            </span>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-3 text-center">
+            <span className="text-xs font-bold tracking-wider text-slate-300 uppercase">
+              TIM PUTIH
+            </span>
+            <div className="text-5xl font-black text-white my-1">
+              {whiteScore}
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Bola Genap (2, 4, 6, 8, 10)
+            </span>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* KISI 10 BOLA ALA SCORESHEET RESMI */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Sisi Merah (1, 3, 5, 7, 9) */}
+          <div className="bg-slate-900/90 border border-red-900/40 rounded-2xl p-3 space-y-2">
+            <h2 className="text-xs font-bold text-red-400 uppercase tracking-wider px-1">
+              Daftar Bola Merah
+            </h2>
+            <div className="space-y-1.5">
+              {redBalls.map((b) => {
+                const isActive = b.number === activeBallNumber;
+                return (
+                  <div
+                    key={b.number}
+                    onClick={() => setActiveBallNumber(b.number)}
+                    className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer border transition ${
+                      isActive
+                        ? "bg-red-900/50 border-red-500 ring-2 ring-red-400 shadow-md scale-[1.01]"
+                        : "bg-slate-950/60 border-slate-800/80 hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-sm shadow">
+                        {b.number}
+                      </div>
+                      {b.isOut && (
+                        <span className="text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded">
+                          OUT
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Indikator Gerbang */}
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono">
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate1 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G1
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate2 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G2
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate3 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G3
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.agari ? "bg-yellow-400 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        AG
+                      </span>
+                      <span className="ml-2 font-bold text-slate-200 text-xs w-8 text-right">
+                        {b.score} pt
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Sisi Putih (2, 4, 6, 8, 10) */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 space-y-2">
+            <h2 className="text-xs font-bold text-slate-300 uppercase tracking-wider px-1">
+              Daftar Bola Putih
+            </h2>
+            <div className="space-y-1.5">
+              {whiteBalls.map((b) => {
+                const isActive = b.number === activeBallNumber;
+                return (
+                  <div
+                    key={b.number}
+                    onClick={() => setActiveBallNumber(b.number)}
+                    className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer border transition ${
+                      isActive
+                        ? "bg-slate-800 border-white ring-2 ring-slate-300 shadow-md scale-[1.01]"
+                        : "bg-slate-950/60 border-slate-800/80 hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-white text-slate-950 font-bold flex items-center justify-center text-sm shadow">
+                        {b.number}
+                      </div>
+                      {b.isOut && (
+                        <span className="text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded">
+                          OUT
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Indikator Gerbang */}
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono">
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate1 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G1
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate2 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G2
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.gate3 ? "bg-emerald-500 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        G3
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold ${b.agari ? "bg-yellow-400 text-black" : "bg-slate-800 text-slate-500"}`}
+                      >
+                        AG
+                      </span>
+                      <span className="ml-2 font-bold text-slate-200 text-xs w-8 text-right">
+                        {b.score} pt
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+
+        {/* PANEL KONTROL EKSEKUSI BOLA AKTIF */}
+        <section className="bg-slate-900 border-2 border-indigo-500/40 rounded-2xl p-4 shadow-xl">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-9 h-9 rounded-full font-black text-base flex items-center justify-center shadow-lg ${
+                  currentBall.color === "red"
+                    ? "bg-red-600 text-white"
+                    : "bg-white text-slate-950"
+                }`}
+              >
+                {currentBall.number}
+              </div>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Giliran Aktif
+                </span>
+                <span className="font-extrabold text-sm md:text-base">
+                  Bola #{currentBall.number} (
+                  {currentBall.color === "red" ? "Merah" : "Putih"})
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleOutBall}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition ${
+                  currentBall.isOut
+                    ? "bg-amber-600/30 border-amber-500 text-amber-300"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                }`}
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                {currentBall.isOut ? "Batalkan Out" : "Tandai Out-Ball"}
+              </button>
+
+              <button
+                onClick={nextTurn}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow transition active:scale-95"
+              >
+                <span>Pukul Berikutnya</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Tombol Poin Gerbang */}
+          <div className="grid grid-cols-4 gap-2">
+            <button
+              disabled={currentBall.gate1}
+              onClick={() => handleScoreAction("gate1")}
+              className={`py-3 rounded-xl font-bold flex flex-col items-center gap-0.5 transition ${
+                currentBall.gate1
+                  ? "bg-slate-800/80 text-slate-600 border border-slate-800 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg active:scale-95"
+              }`}
+            >
+              <span className="text-sm">Gate 1</span>
+              <span className="text-[11px] font-normal">
+                {currentBall.gate1 ? "✓ Lolos" : "+1 Poin"}
+              </span>
+            </button>
+
+            <button
+              disabled={!currentBall.gate1 || currentBall.gate2}
+              onClick={() => handleScoreAction("gate2")}
+              className={`py-3 rounded-xl font-bold flex flex-col items-center gap-0.5 transition ${
+                currentBall.gate2
+                  ? "bg-slate-800/80 text-slate-600 border border-slate-800 cursor-not-allowed"
+                  : !currentBall.gate1
+                    ? "bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg active:scale-95"
+              }`}
+            >
+              <span className="text-sm">Gate 2</span>
+              <span className="text-[11px] font-normal">
+                {currentBall.gate2 ? "✓ Lolos" : "+1 Poin"}
+              </span>
+            </button>
+
+            <button
+              disabled={!currentBall.gate2 || currentBall.gate3}
+              onClick={() => handleScoreAction("gate3")}
+              className={`py-3 rounded-xl font-bold flex flex-col items-center gap-0.5 transition ${
+                currentBall.gate3
+                  ? "bg-slate-800/80 text-slate-600 border border-slate-800 cursor-not-allowed"
+                  : !currentBall.gate2
+                    ? "bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg active:scale-95"
+              }`}
+            >
+              <span className="text-sm">Gate 3</span>
+              <span className="text-[11px] font-normal">
+                {currentBall.gate3 ? "✓ Lolos" : "+1 Poin"}
+              </span>
+            </button>
+
+            <button
+              disabled={!currentBall.gate3 || currentBall.agari}
+              onClick={() => handleScoreAction("agari")}
+              className={`py-3 rounded-xl font-bold flex flex-col items-center gap-0.5 transition ${
+                currentBall.agari
+                  ? "bg-slate-800/80 text-slate-600 border border-slate-800 cursor-not-allowed"
+                  : !currentBall.gate3
+                    ? "bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed"
+                    : "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg active:scale-95"
+              }`}
+            >
+              <Award className="w-4 h-4" />
+              <span className="text-sm">AGARI</span>
+              <span className="text-[11px] font-normal">
+                {currentBall.agari ? "✓ Selesai" : "+2 Poin"}
+              </span>
+            </button>
+          </div>
+        </section>
+
+        {/* LOG RIWAYAT */}
+        <section className="bg-slate-900 px-4 py-3 rounded-xl border border-slate-800">
+          <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+            Log Pertandingan Terkini
+          </h3>
+          <div className="h-24 overflow-y-auto font-mono text-[11px] space-y-1 text-slate-300">
+            {logs.length === 0 ? (
+              <p className="text-slate-600 italic">Belum ada aksi dicatat.</p>
+            ) : (
+              logs.map((log, index) => (
+                <div
+                  key={index}
+                  className="border-b border-slate-800/50 pb-0.5"
+                >
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }
