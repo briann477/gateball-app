@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   RefreshCw,
   GitBranch,
+  Calendar,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -150,6 +151,15 @@ export default function AdminDashboard() {
             >
               <GitBranch className="w-4 h-4" />
               <span>Bagan Gugur & Pool</span>
+            </Link>
+
+            <Link
+              href="/schedule"
+              target="_blank"
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow transition"
+            >
+              <Calendar className="w-4 h-4" />
+              <span>Jadwal Akbar</span>
             </Link>
           </div>
         </header>
