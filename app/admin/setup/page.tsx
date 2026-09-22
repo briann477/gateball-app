@@ -18,7 +18,9 @@ import {
   AlertTriangle,
   Calculator,
   Wand2,
+  RotateCcw,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 interface TeamItem {
   id: string;
@@ -26,7 +28,21 @@ interface TeamItem {
   city: string;
 }
 
-// Preset kota PERGATSI untuk auto-generator
+interface ScheduleMatch {
+  id: string;
+  matchNumber: number;
+  sessionNumber: number;
+  time: string;
+  field: string;
+  category: string;
+  pool: string;
+  redTeam: string;
+  whiteTeam: string;
+  redScore: number | null;
+  whiteScore: number | null;
+  status: "live" | "finished" | "upcoming";
+}
+
 const cities = [
   "Kota Depok",
   "Kota Bogor",
@@ -36,48 +52,51 @@ const cities = [
   "Kota Sukabumi",
   "Kota Cimahi",
   "Kab. Cianjur",
-  "Kota Cirebon",
-  "Kab. Garut",
-  "Kab. Karawang",
-  "Kab. Subang",
-  "Kota Tasikmalaya",
-  "Kab. Purwakarta",
-  "Kota Tangerang",
-  "DKI Jakarta",
 ];
+
+const initialBalls = Array.from({ length: 10 }, (_, i) => ({
+  number: i + 1,
+  color: (i + 1) % 2 !== 0 ? "red" : "white",
+  gate1: false,
+  gate2: false,
+  gate3: false,
+  agari: false,
+  isOut: false,
+  score: 0,
+}));
 
 export default function TournamentSetup() {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
 
   // 1. Data Info Turnamen & Hadiah
   const [tournamentName, setTournamentName] = useState(
-    "Kejuaraan Gateball PERGATSI Open 2026",
+    "Kejuaraan Gateball PERGATSI 8 Tim 2026",
   );
   const [venue, setVenue] = useState("Stadion Mahakam, Depok");
   const [startDate, setStartDate] = useState("2026-10-15");
   const [courtCount, setCourtCount] = useState(4);
 
   // Anggaran Hadiah
-  const [totalBudget, setTotalBudget] = useState<number>(30000000);
-  const [prize1Amount, setPrize1Amount] = useState<number>(15000000);
-  const [prize2Amount, setPrize2Amount] = useState<number>(9000000);
-  const [prize3Amount, setPrize3Amount] = useState<number>(6000000);
+  const [totalBudget, setTotalBudget] = useState<number>(20000000);
+  const [prize1Amount, setPrize1Amount] = useState<number>(10000000);
+  const [prize2Amount, setPrize2Amount] = useState<number>(6000000);
+  const [prize3Amount, setPrize3Amount] = useState<number>(4000000);
   const [prize1Note, setPrize1Note] = useState("Piala Bergilir + Medali Emas");
   const [prize2Note, setPrize2Note] = useState("Piala Tetap + Medali Perak");
   const [prize3Note, setPrize3Note] = useState("Piala Tetap + Medali Perunggu");
 
-  // 2. Data Tim Peserta & Konfigurasi Slot
+  // 2. Data Tim & Konfigurasi Slot
   const [teams, setTeams] = useState<TeamItem[]>([]);
-  const [customSlotInput, setCustomSlotInput] = useState<number>(16);
+  const [customSlotInput, setCustomSlotInput] = useState<number>(8);
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamCity, setNewTeamCity] = useState("");
 
   // 3. Konfigurasi Pool & Undian
-  const [poolCount, setPoolCount] = useState<number>(4);
+  const [poolCount, setPoolCount] = useState<number>(2);
   const [pools, setPools] = useState<{ [key: string]: TeamItem[] }>({});
   const [isShuffling, setIsShuffling] = useState(false);
 
-  // Auto Generate List Tim
+  // Generator Slot Tim Otomatis
   const generateTeamsBatch = (count: number) => {
     const batch: TeamItem[] = [];
     for (let i = 1; i <= count; i++) {
@@ -89,32 +108,222 @@ export default function TournamentSetup() {
       });
     }
     setTeams(batch);
-
-    // Hitung rekomendasi jumlah pool otomatis (standar SOP: 4 tim per pool)
-    const recommendedPools = Math.max(2, Math.ceil(count / 4));
-    setPoolCount(recommendedPools);
+    const recommended = count <= 8 ? 2 : Math.max(2, Math.ceil(count / 4));
+    setPoolCount(recommended);
   };
 
-  // Muat data awal atau buat 16 tim saat pertama kali buka
-  useEffect(() => {
-    const saved = localStorage.getItem("pergatsi_tournament_data");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.tournamentName) setTournamentName(parsed.tournamentName);
-        if (parsed.totalBudget) setTotalBudget(parsed.totalBudget);
-        if (parsed.teams && parsed.teams.length > 0) {
-          setTeams(parsed.teams);
-          setPoolCount(
-            parsed.poolCount || Math.max(2, Math.ceil(parsed.teams.length / 4)),
-          );
+  // 1. FUNGSI SAKTI: RESET & BUAT TURNAMEN BARU DARI NOL
+  const handleHardResetTournament = async (targetCount = 8) => {
+    if (
+      !confirm(
+        `Yakin ingin menyapu bersih data lama dan membuat turnamen baru ${targetCount} Tim?`,
+      )
+    ) {
+      return;
+    }
+
+    // Bersihkan storage browser
+    localStorage.removeItem("pergatsi_tournament_data");
+
+    // Siapkan data 8 tim bersih
+    const newTournamentName = `Kejuaraan Gateball PERGATSI ${targetCount} Tim 2026`;
+    setTournamentName(newTournamentName);
+    setTotalBudget(20000000);
+    setPrize1Amount(10000000);
+    setPrize2Amount(6000000);
+    setPrize3Amount(4000000);
+
+    const freshTeams: TeamItem[] = [];
+    for (let i = 1; i <= targetCount; i++) {
+      freshTeams.push({
+        id: `T-${i}-${Date.now()}`,
+        name: `Klub Gateball ${i < 10 ? "0" + i : i}`,
+        city: cities[(i - 1) % cities.length],
+      });
+    }
+    setTeams(freshTeams);
+
+    // Otomatis bagi ke 2 pool
+    const targetPoolCount = targetCount <= 8 ? 2 : 4;
+    setPoolCount(targetPoolCount);
+
+    const freshPools: { [key: string]: TeamItem[] } = {
+      "Pool A": freshTeams.slice(0, 4),
+      "Pool B": freshTeams.slice(4, 8),
+    };
+    setPools(freshPools);
+
+    // Buat jadwal baru yang bersih (semua skor kosong / belum mulai)
+    const freshMatches = buildScheduleFromPools(freshPools, 4);
+
+    // Simpan ke storage
+    const newPayload = {
+      tournamentName: newTournamentName,
+      venue: "Stadion Mahakam, Depok",
+      startDate: "2026-10-15",
+      courtCount: 4,
+      totalBudget: 20000000,
+      prizes: {
+        j1: { amount: 10000000, note: "Piala Bergilir + Emas" },
+        j2: { amount: 6000000, note: "Medali Perak" },
+        j3: { amount: 4000000, note: "Medali Perunggu" },
+      },
+      teams: freshTeams,
+      pools: freshPools,
+      poolCount: targetPoolCount,
+      matches: freshMatches,
+    };
+    localStorage.setItem(
+      "pergatsi_tournament_data",
+      JSON.stringify(newPayload),
+    );
+
+    // Reset Supabase Cloud (Papan Wasit & TV) langsung ke Match 1 turnamen baru
+    try {
+      const { data } = await supabase
+        .from("matches")
+        .select("id")
+        .limit(1)
+        .single();
+      if (data && freshMatches[0]) {
+        await supabase
+          .from("matches")
+          .update({
+            field_name: `${freshMatches[0].field} — ${freshMatches[0].pool}`,
+            red_team_name: freshMatches[0].redTeam,
+            white_team_name: freshMatches[0].whiteTeam,
+            red_score: 0,
+            white_score: 0,
+            seconds_left: 1800,
+            is_timer_running: false,
+            active_ball_number: 1,
+            balls_data: initialBalls,
+            logs: [
+              `Turnamen Baru Direset: ${freshMatches[0].redTeam} vs ${freshMatches[0].whiteTeam}`,
+            ],
+          })
+          .eq("id", data.id);
+      }
+    } catch (e) {
+      console.error("Gagal reset supabase", e);
+    }
+
+    setCurrentStep(2);
+    alert(`Turnamen baru ${targetCount} Tim berhasil dibuat bersih dari nol!`);
+  };
+
+  // Helper penyusun jadwal simultan
+  const buildScheduleFromPools = (
+    currentPools: { [key: string]: TeamItem[] },
+    courts = 4,
+  ): ScheduleMatch[] => {
+    const list: ScheduleMatch[] = [];
+    const poolMatches: { pool: string; red: string; white: string }[] = [];
+
+    Object.entries(currentPools).forEach(([pName, pTeams]) => {
+      const n = pTeams.length;
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          poolMatches.push({
+            pool: pName,
+            red: pTeams[i].name,
+            white: pTeams[j].name,
+          });
         }
+      }
+    });
+
+    let counter = 1;
+    poolMatches.forEach((m, idx) => {
+      const session = Math.floor(idx / courts);
+      const courtNum = (idx % courts) + 1;
+      const totalMins = session * 40;
+      const hour = 8 + Math.floor(totalMins / 60);
+      const min = totalMins % 60;
+      const time = `${hour.toString().padStart(2, "0")}:${min.toString().padStart(2, "0")} WIB`;
+
+      list.push({
+        id: `M-${counter}`,
+        matchNumber: counter,
+        sessionNumber: session + 1,
+        time,
+        field: `Lapangan ${courtNum}`,
+        category: "Beregu Campuran",
+        pool: m.pool,
+        redTeam: m.red,
+        whiteTeam: m.white,
+        redScore: null,
+        whiteScore: null,
+        status: "upcoming",
+      });
+      counter++;
+    });
+
+    // Tambah Semifinal Silang & Final
+    const lastSession = Math.ceil(poolMatches.length / courts);
+    list.push(
+      {
+        id: `M-${counter}`,
+        matchNumber: counter++,
+        sessionNumber: lastSession + 1,
+        time: "14:00 WIB",
+        field: "Lapangan 1",
+        category: "Beregu Campuran",
+        pool: "Semifinal Silang 1",
+        redTeam: "Juara Pool A",
+        whiteTeam: "Runner-up Pool B",
+        redScore: null,
+        whiteScore: null,
+        status: "upcoming",
+      },
+      {
+        id: `M-${counter}`,
+        matchNumber: counter++,
+        sessionNumber: lastSession + 1,
+        time: "14:00 WIB",
+        field: "Lapangan 2",
+        category: "Beregu Campuran",
+        pool: "Semifinal Silang 2",
+        redTeam: "Juara Pool B",
+        whiteTeam: "Runner-up Pool A",
+        redScore: null,
+        whiteScore: null,
+        status: "upcoming",
+      },
+      {
+        id: `M-${counter}`,
+        matchNumber: counter++,
+        sessionNumber: lastSession + 2,
+        time: "15:00 WIB",
+        field: "Lapangan 1",
+        category: "Beregu Campuran",
+        pool: "🏆 GRAND FINAL",
+        redTeam: "Pemenang SF-1",
+        whiteTeam: "Pemenang SF-2",
+        redScore: null,
+        whiteScore: null,
+        status: "upcoming",
+      },
+    );
+
+    return list;
+  };
+
+  // Muat data saat pertama kali buka
+  useEffect(() => {
+    const raw = localStorage.getItem("pergatsi_tournament_data");
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.tournamentName) setTournamentName(parsed.tournamentName);
+        if (parsed.teams && parsed.teams.length > 0) setTeams(parsed.teams);
         if (parsed.pools) setPools(parsed.pools);
+        if (parsed.poolCount) setPoolCount(parsed.poolCount);
       } catch (e) {
-        console.error("Gagal membaca storage", e);
+        console.error(e);
       }
     } else {
-      generateTeamsBatch(16);
+      generateTeamsBatch(8);
     }
   }, []);
 
@@ -138,53 +347,6 @@ export default function TournamentSetup() {
     setPrize3Amount(j3);
   };
 
-  // Simpan ke localStorage
-  const saveToStorage = (
-    updatedPools: { [key: string]: TeamItem[] },
-    pCount: number,
-  ) => {
-    const payload = {
-      tournamentName,
-      venue,
-      startDate,
-      courtCount,
-      totalBudget,
-      prizes: {
-        j1: { amount: prize1Amount, note: prize1Note },
-        j2: { amount: prize2Amount, note: prize2Note },
-        j3: { amount: prize3Amount, note: prize3Note },
-      },
-      teams,
-      pools: updatedPools,
-      poolCount: pCount,
-    };
-    localStorage.setItem("pergatsi_tournament_data", JSON.stringify(payload));
-  };
-
-  const handleAddSingleTeam = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTeamName.trim()) return;
-
-    const newT: TeamItem = {
-      id: `T${Date.now()}`,
-      name: newTeamName.trim(),
-      city: newTeamCity.trim() || "Umum",
-    };
-
-    const updated = [...teams, newT];
-    setTeams(updated);
-    setNewTeamName("");
-    setNewTeamCity("");
-    setPoolCount(Math.max(2, Math.ceil(updated.length / 4)));
-  };
-
-  const handleDeleteTeam = (id: string) => {
-    const updated = teams.filter((t) => t.id !== id);
-    setTeams(updated);
-    setPoolCount(Math.max(2, Math.ceil(updated.length / 4)));
-  };
-
-  // Algoritma Kocok Pool Dinamis (Mendukung Pool A sampai Z)
   const handleShufflePools = () => {
     if (teams.length < poolCount * 2) {
       alert(`Minimal daftarkan ${poolCount * 2} tim untuk ${poolCount} pool!`);
@@ -197,15 +359,12 @@ export default function TournamentSetup() {
       const shuffled = [...teams].sort(() => Math.random() - 0.5);
       const generatedPools: { [key: string]: TeamItem[] } = {};
 
-      // Buat nama pool: Pool A, Pool B, Pool C, dst.
       for (let i = 0; i < poolCount; i++) {
-        const letter = String.fromCharCode(65 + i); // 65 = 'A'
+        const letter = String.fromCharCode(65 + i);
         generatedPools[`Pool ${letter}`] = [];
       }
 
       const poolKeys = Object.keys(generatedPools);
-
-      // Distribusikan tim secara merata bergantian (Fair distribution)
       shuffled.forEach((team, index) => {
         const target = poolKeys[index % poolKeys.length];
         generatedPools[target].push(team);
@@ -213,14 +372,34 @@ export default function TournamentSetup() {
 
       setPools(generatedPools);
       setIsShuffling(false);
-      saveToStorage(generatedPools, poolCount);
+
+      // Sekaligus susun jadwal baru yang sinkron dan simpan
+      const freshMatches = buildScheduleFromPools(generatedPools, courtCount);
+
+      const payload = {
+        tournamentName,
+        venue,
+        startDate,
+        courtCount,
+        totalBudget,
+        prizes: {
+          j1: { amount: prize1Amount, note: prize1Note },
+          j2: { amount: prize2Amount, note: prize2Note },
+          j3: { amount: prize3Amount, note: prize3Note },
+        },
+        teams,
+        pools: generatedPools,
+        poolCount,
+        matches: freshMatches,
+      };
+      localStorage.setItem("pergatsi_tournament_data", JSON.stringify(payload));
     }, 600);
   };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* HEADER */}
+        {/* HEADER UTAMA */}
         <header className="flex flex-wrap items-center justify-between bg-slate-900 border border-slate-800 p-5 rounded-3xl gap-4 shadow-xl">
           <div className="flex items-center gap-3">
             <Link
@@ -233,51 +412,64 @@ export default function TournamentSetup() {
               <div className="flex items-center gap-2">
                 <Trophy className="w-5 h-5 text-yellow-400" />
                 <span className="text-xs uppercase tracking-widest text-emerald-400 font-bold">
-                  PERGATSI Flexible Tournament Engine
+                  PERGATSI Tournament Builder
                 </span>
               </div>
               <h1 className="text-xl md:text-2xl font-black text-white mt-0.5">
-                Setup Turnamen & Mesin Undian Fleksibel
+                Setup Turnamen & Mesin Undian
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center bg-slate-950 p-1.5 rounded-2xl border border-slate-800 text-xs font-bold">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* TOMBOL MERAH SAKTI RESET TOTAL */}
             <button
-              onClick={() => setCurrentStep(1)}
-              className={`px-3 py-1.5 rounded-xl transition ${
-                currentStep === 1
-                  ? "bg-indigo-600 text-white shadow"
-                  : "text-slate-400 hover:text-white"
-              }`}
+              onClick={() => handleHardResetTournament(8)}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg transition active:scale-95"
+              title="Hapus data turnamen lama dan mulai turnamen 8 tim baru dari nol"
             >
-              1. Info & Hadiah
+              <RotateCcw className="w-4 h-4" />
+              <span>Reset Turnamen (8 Tim Baru)</span>
             </button>
-            <button
-              onClick={() => setCurrentStep(2)}
-              className={`px-3 py-1.5 rounded-xl transition ${
-                currentStep === 2
-                  ? "bg-indigo-600 text-white shadow"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              2. Slot Tim ({teams.length})
-            </button>
-            <button
-              onClick={() => setCurrentStep(3)}
-              className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
-                currentStep === 3
-                  ? "bg-amber-600 text-white shadow"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Shuffle className="w-3.5 h-3.5" />
-              3. Undian ({poolCount} Pool)
-            </button>
+
+            {/* STEPPER */}
+            <div className="flex items-center bg-slate-950 p-1.5 rounded-2xl border border-slate-800 text-xs font-bold">
+              <button
+                onClick={() => setCurrentStep(1)}
+                className={`px-3 py-1.5 rounded-xl transition ${
+                  currentStep === 1
+                    ? "bg-indigo-600 text-white shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                1. Info & Hadiah
+              </button>
+              <button
+                onClick={() => setCurrentStep(2)}
+                className={`px-3 py-1.5 rounded-xl transition ${
+                  currentStep === 2
+                    ? "bg-indigo-600 text-white shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                2. Slot Tim ({teams.length})
+              </button>
+              <button
+                onClick={() => setCurrentStep(3)}
+                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
+                  currentStep === 3
+                    ? "bg-amber-600 text-white shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                3. Undian ({poolCount} Pool)
+              </button>
+            </div>
           </div>
         </header>
 
-        {/* STEP 1: INFO TURNAMEN & KALKULATOR HADIAH */}
+        {/* STEP 1: INFO & KALKULASI ANGGARAN */}
         {currentStep === 1 && (
           <section className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
             <div className="border-b border-slate-800 pb-3">
@@ -335,12 +527,8 @@ export default function TournamentSetup() {
                   onChange={(e) => setCourtCount(Number(e.target.value))}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value={1}>1 Lapangan (Single Court)</option>
-                  <option value={2}>2 Lapangan (Court 1 & 2)</option>
-                  <option value={3}>3 Lapangan (Court 1, 2, 3)</option>
-                  <option value={4}>
-                    4 Lapangan (Standar Kejurda/Kejurnas)
-                  </option>
+                  <option value={2}>2 Lapangan</option>
+                  <option value={4}>4 Lapangan (Standar Simultan)</option>
                 </select>
               </div>
 
@@ -408,14 +596,9 @@ export default function TournamentSetup() {
                     <span className="font-bold text-emerald-400 flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5" /> PAS (100%)
                     </span>
-                  ) : budgetDifference > 0 ? (
-                    <span className="font-bold text-amber-400 flex items-center gap-1">
-                      Sisa: {formatRupiah(budgetDifference)}
-                    </span>
                   ) : (
-                    <span className="font-bold text-red-400 flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5" /> OVER BUDGET (
-                      {formatRupiah(Math.abs(budgetDifference))})
+                    <span className="font-bold text-amber-400">
+                      Sisa: {formatRupiah(budgetDifference)}
                     </span>
                   )}
                 </div>
@@ -435,12 +618,6 @@ export default function TournamentSetup() {
                   <span className="text-[11px] text-yellow-300 font-mono block">
                     {formatRupiah(prize1Amount)}
                   </span>
-                  <input
-                    type="text"
-                    value={prize1Note}
-                    onChange={(e) => setPrize1Note(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-300"
-                  />
                 </div>
 
                 <div className="p-4 bg-slate-900 border border-slate-500/50 rounded-2xl space-y-2">
@@ -456,12 +633,6 @@ export default function TournamentSetup() {
                   <span className="text-[11px] text-slate-300 font-mono block">
                     {formatRupiah(prize2Amount)}
                   </span>
-                  <input
-                    type="text"
-                    value={prize2Note}
-                    onChange={(e) => setPrize2Note(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-300"
-                  />
                 </div>
 
                 <div className="p-4 bg-slate-900 border border-amber-700/50 rounded-2xl space-y-2">
@@ -477,12 +648,6 @@ export default function TournamentSetup() {
                   <span className="text-[11px] text-amber-400 font-mono block">
                     {formatRupiah(prize3Amount)}
                   </span>
-                  <input
-                    type="text"
-                    value={prize3Note}
-                    onChange={(e) => setPrize3Note(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-300"
-                  />
                 </div>
               </div>
             </div>
@@ -498,133 +663,67 @@ export default function TournamentSetup() {
           </section>
         )}
 
-        {/* STEP 2: SLOT TIM (8, 16, 32, 36 & CUSTOM SLOT) */}
+        {/* STEP 2: SLOT TIM PESERTA */}
         {currentStep === 2 && (
           <section className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
             <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
               <div>
                 <h2 className="text-lg font-black text-white flex items-center gap-2">
                   <Layers className="w-5 h-5 text-indigo-400" />
-                  Konfigurasi Slot Peserta ({teams.length} Tim Terdaftar)
+                  Daftar Tim Peserta ({teams.length} Tim Terdaftar)
                 </h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Pilih format standar SOP PERGATSI atau tentukan jumlah slot
-                  khusus secara bebas.
+                  Format 8 tim standar PERGATSI siap untuk dibagi ke Pool A dan
+                  Pool B.
                 </p>
               </div>
 
-              {/* TOMBOL PRESET PERGATSI (8, 16, 32, 36) */}
-              <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-2 rounded-2xl border border-slate-800">
-                <span className="text-[11px] text-slate-400 font-bold px-2">
-                  Preset SOP:
-                </span>
-                {[8, 16, 32, 36].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => generateTeamsBatch(num)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                      teams.length === num
-                        ? "bg-indigo-600 text-white shadow-lg"
-                        : "bg-slate-900 text-slate-300 hover:text-white"
-                    }`}
-                  >
-                    {num} Tim
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* GENERATOR CUSTOM SLOT */}
-            <div className="p-4 bg-slate-950 border-2 border-indigo-500/30 rounded-2xl flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-indigo-600/20 text-indigo-400 rounded-xl">
-                  <Wand2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Custom Slot Builder (Slot Tidak Penuh)
-                  </h4>
-                  <p className="text-[11px] text-slate-400">
-                    Mau buat format 12, 18, 20, atau 24 tim? Ketik jumlahnya
-                    lalu klik Generate.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={4}
-                  max={64}
-                  value={customSlotInput}
-                  onChange={(e) => setCustomSlotInput(Number(e.target.value))}
-                  className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center text-sm font-bold text-white focus:outline-none focus:border-indigo-500"
-                />
+              <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
                 <button
                   type="button"
-                  onClick={() => generateTeamsBatch(customSlotInput)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition"
+                  onClick={() => generateTeamsBatch(8)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                    teams.length === 8
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-900 text-slate-400"
+                  }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate {customSlotInput} Slot</span>
+                  8 Tim (2 Pool)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateTeamsBatch(16)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                    teams.length === 16
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-900 text-slate-400"
+                  }`}
+                >
+                  16 Tim (4 Pool)
                 </button>
               </div>
             </div>
 
-            {/* FORM TAMBAH MANUAL PER TIM */}
-            <form
-              onSubmit={handleAddSingleTeam}
-              className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800"
-            >
-              <input
-                type="text"
-                placeholder="Nama Tim/Klub Manual"
-                value={newTeamName}
-                onChange={(e) => setNewTeamName(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-              />
-              <input
-                type="text"
-                placeholder="Kota Asal / Pengcab"
-                value={newTeamCity}
-                onChange={(e) => setNewTeamCity(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-              />
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow"
-              >
-                <Plus className="w-4 h-4" /> Tambah 1 Tim
-              </button>
-            </form>
-
-            {/* LIST DAFTAR SELURUH TIM */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto pr-1">
+            {/* LIST DAFTAR TIM */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
               {teams.map((team, index) => (
                 <div
                   key={team.id}
-                  className="flex items-center justify-between p-2.5 bg-slate-950/70 border border-slate-800 rounded-xl hover:border-slate-700"
+                  className="flex items-center justify-between p-3 bg-slate-950/70 border border-slate-800 rounded-xl"
                 >
-                  <div className="flex items-center gap-2.5 truncate">
-                    <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 font-mono text-[10px] font-black flex items-center justify-center shrink-0">
-                      {index + 1}
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 font-mono text-[11px] font-black flex items-center justify-center">
+                      #{index + 1}
                     </span>
-                    <div className="truncate">
-                      <h4 className="text-xs font-bold text-white truncate">
+                    <div>
+                      <h4 className="text-xs font-bold text-white">
                         {team.name}
                       </h4>
-                      <span className="text-[10px] text-slate-400 block">
+                      <span className="text-[10px] text-slate-400">
                         {team.city}
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteTeam(team.id)}
-                    className="p-1.5 text-slate-500 hover:text-red-400 transition shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
                 </div>
               ))}
             </div>
@@ -640,108 +739,74 @@ export default function TournamentSetup() {
                 onClick={() => setCurrentStep(3)}
                 className="px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg"
               >
-                Lanjut: Undian Pool ({poolCount} Pool){" "}
-                <Shuffle className="w-4 h-4" />
+                Lanjut: Undian 2 Pool <Shuffle className="w-4 h-4" />
               </button>
             </div>
           </section>
         )}
 
-        {/* STEP 3: UNDIAN POOL OTOMATIS BERBAGAI FORMAT */}
+        {/* STEP 3: KOCOK UNDIAN POOL */}
         {currentStep === 3 && (
           <section className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
-            <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-4 gap-3">
-              <div>
-                <h2 className="text-lg font-black text-white flex items-center gap-2">
-                  <Shuffle className="w-5 h-5 text-amber-400" />
-                  Drawing Undian Pool ({teams.length} Tim)
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Format: {poolCount} Pool (Rata-rata{" "}
-                  {Math.ceil(teams.length / poolCount)} tim per pool, standar
-                  SOP PERGATSI).
-                </p>
-              </div>
-
-              {/* PILIHAN ATUR JUMLAH POOL MANUAL */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-400">
-                  Jumlah Pool:
-                </span>
-                <select
-                  value={poolCount}
-                  onChange={(e) => setPoolCount(Number(e.target.value))}
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-                >
-                  <option value={2}>2 Pool (A, B)</option>
-                  <option value={4}>4 Pool (A - D)</option>
-                  <option value={6}>6 Pool (A - F)</option>
-                  <option value={8}>8 Pool (A - H)</option>
-                  <option value={9}>9 Pool (A - I)</option>
-                  <option value={12}>12 Pool (A - L)</option>
-                </select>
-              </div>
+            <div className="border-b border-slate-800 pb-4">
+              <h2 className="text-lg font-black text-white flex items-center gap-2">
+                <Shuffle className="w-5 h-5 text-amber-400" />
+                Drawing Undian ({teams.length} Tim ke {poolCount} Pool)
+              </h2>
             </div>
 
-            <div className="text-center py-6 bg-gradient-to-b from-indigo-950/30 to-slate-950 rounded-3xl border border-indigo-900/50 p-6 space-y-3">
+            <div className="text-center py-6 bg-slate-950 rounded-3xl border border-indigo-900/50 p-6 space-y-3">
               <button
                 disabled={isShuffling}
                 onClick={handleShufflePools}
-                className="px-8 py-4 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black rounded-2xl text-base shadow-2xl transition transform active:scale-95 flex items-center gap-3 mx-auto disabled:opacity-50"
+                className="px-8 py-4 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 text-slate-950 font-black rounded-2xl text-base shadow-2xl transition transform active:scale-95 flex items-center gap-3 mx-auto"
               >
                 <Shuffle
                   className={`w-5 h-5 ${isShuffling ? "animate-spin" : ""}`}
                 />
                 <span>
                   {isShuffling
-                    ? "SEDANG MENGACAK BOLA UNDIAN..."
+                    ? "MENGACAK UNDIAN..."
                     : `🎲 KOCOK ${teams.length} TIM KE ${poolCount} POOL`}
                 </span>
               </button>
-              <p className="text-xs text-slate-400 font-mono">
-                Sistem mengacak urutan dan membagi tim secara bergiliran agar
-                tidak ada pool neraka.
-              </p>
             </div>
 
-            {/* GRID POOL DINAMIS (RESPONSIF BISA BANYAK POOL) */}
+            {/* HASIL DRAWING */}
             {Object.keys(pools).length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {Object.entries(pools).map(([poolName, poolTeams], pIdx) => (
                   <div
                     key={poolName}
-                    className="bg-slate-950 border-2 border-indigo-500/40 rounded-2xl p-4 shadow-xl space-y-3"
+                    className="bg-slate-950 border-2 border-indigo-500/40 rounded-2xl p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                       <h3 className="font-black text-white text-sm flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-400" />
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${pIdx === 0 ? "bg-red-500" : "bg-blue-500"}`}
+                        />
                         {poolName}
                       </h3>
-                      <span className="text-[10px] font-mono font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
+                      <span className="text-[10px] font-mono text-slate-300 bg-slate-800 px-2 py-0.5 rounded font-bold">
                         {poolTeams.length} Tim
                       </span>
                     </div>
 
                     <div className="space-y-1.5">
-                      {poolTeams.map((team, tIdx) => (
+                      {poolTeams.map((t, idx) => (
                         <div
-                          key={team.id}
+                          key={t.id}
                           className="flex items-center justify-between p-2 bg-slate-900/80 border border-slate-800 rounded-xl"
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
-                              {tIdx + 1}
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-mono font-bold flex items-center justify-center">
+                              {idx + 1}
                             </span>
-                            <div className="truncate">
-                              <div className="text-xs font-bold text-white truncate">
-                                {team.name}
-                              </div>
-                              <div className="text-[9px] text-slate-400 truncate">
-                                {team.city}
-                              </div>
-                            </div>
+                            <span className="text-xs font-bold text-white">
+                              {t.name}
+                            </span>
                           </div>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-1" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                         </div>
                       ))}
                     </div>
@@ -750,7 +815,6 @@ export default function TournamentSetup() {
               </div>
             )}
 
-            {/* AKSI KE BAGAN & JADWAL */}
             {Object.keys(pools).length > 0 && (
               <div className="flex flex-wrap items-center justify-between pt-6 border-t border-slate-800 gap-3">
                 <button
@@ -762,10 +826,10 @@ export default function TournamentSetup() {
 
                 <div className="flex items-center gap-3">
                   <Link
-                    href="/bracket"
-                    className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 rounded-xl text-xs font-black flex items-center gap-2 shadow-xl transition"
+                    href="/schedule"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-xl transition"
                   >
-                    <span>Lihat Bagan Gugur & Klasemen</span>
+                    <span>Kunci & Buka Jadwal Tanding Baru</span>
                     <ArrowRight className="w-4 h-4" />
                   </Link>
                 </div>
