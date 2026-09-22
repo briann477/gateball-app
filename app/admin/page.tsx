@@ -11,6 +11,7 @@ import {
   Trash2,
   CheckCircle2,
   RefreshCw,
+  GitBranch,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -140,6 +141,15 @@ export default function AdminDashboard() {
             >
               <Tv className="w-4 h-4 text-emerald-400" />
               <span>Buka Layar TV</span>
+            </Link>
+
+            <Link
+              href="/bracket"
+              target="_blank"
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow transition"
+            >
+              <GitBranch className="w-4 h-4" />
+              <span>Bagan Gugur & Pool</span>
             </Link>
           </div>
         </header>
